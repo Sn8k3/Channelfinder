@@ -498,7 +498,7 @@ function renderChannels() {
         <div class="stat-pill"><div class="stat-dot" style="background:${subsColor}"></div>${ch.hiddenSubs ? 'Subs hidden' : formatNum(ch.subscribers)+' subs'}</div>
         <div class="stat-pill"><div class="stat-dot" style="background:${viewsColor}"></div>${formatNum(ch.totalViews)} views</div>
         <div class="stat-pill" style="color:var(--muted);font-size:11px;">${formatNum(ch.videoCount)} videos</div>
-        ${ch.lastUpload ? \`<div class=\"stat-pill\" style=\"color:var(--muted);font-size:11px;\">Last: \${ch.lastUpload.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>\` : ''}
+        ${ch.lastUpload ? '<div class="stat-pill" style="color:var(--muted);font-size:11px;">Last: ' + ch.lastUpload.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + '</div>' : ''}
       </div>
     </a>`;
   }).join('')}</div>`;
