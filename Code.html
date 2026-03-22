@@ -224,6 +224,18 @@
     </div>
 
     <div class="filter-group">
+      <div class="filter-label">Last Upload</div>
+      <select class="sort-select" id="recentUpload" onchange="onRecentFilterChange()">
+        <option value="any">Any time</option>
+        <option value="7">Within 7 days</option>
+        <option value="30">Within 30 days</option>
+        <option value="90">Within 90 days</option>
+        <option value="365">Within 1 year</option>
+      </select>
+      <div class="filter-hint" id="recentHint" style="display:none;">Fetching upload dates…</div>
+    </div>
+
+    <div class="filter-group">
       <div class="filter-label">Sort By</div>
       <select class="sort-select" id="sortBy" onchange="onFilterChange()">
         <option value="relevance">Relevance</option>
@@ -232,6 +244,7 @@
         <option value="views_desc">Total Views (high → low)</option>
         <option value="views_asc">Total Views (low → high)</option>
         <option value="videos_desc">Video Count (high → low)</option>
+        <option value="recent_desc">Last Upload (newest first)</option>
       </select>
     </div>
   </aside>
@@ -307,6 +320,31 @@ function onFilterChange() {
   if (allChannels.length) applyFiltersAndRender();
 }
 
+function onRecentFilterChange() {
+  const days = document.getElementById('recentUpload').value;
+  if (days === 'any' || allChannels.every(ch => ch.lastUpload !== undefined)) {
+    applyFiltersAndRender();
+  } else {
+    fetchLastUploads().then(() => applyFiltersAndRender());
+  }
+}
+
+async function fetchLastUploads() {
+  const hint = document.getElementById('recentHint');
+  hint.style.display = 'block';
+  const YT_SEARCH = 'https://www.googleapis.com/youtube/v3/search';
+  await Promise.all(allChannels.map(async ch => {
+    if (ch.lastUpload !== undefined) return;
+    try {
+      const p = new URLSearchParams({ part: 'snippet', channelId: ch.id, order: 'date', maxResults: 1, type: 'video', key: API_KEY });
+      const r = await fetch(YT_SEARCH + '?' + p);
+      const d = await r.json();
+      ch.lastUpload = d.items?.[0]?.snippet?.publishedAt ? new Date(d.items[0].snippet.publishedAt) : null;
+    } catch { ch.lastUpload = null; }
+  }));
+  hint.style.display = 'none';
+}
+
 async function doSearch(pageToken) {
   const query = document.getElementById('searchInput').value.trim();
   if (!query) return;
@@ -379,6 +417,9 @@ function applyFiltersAndRender() {
   const viewMin = parseSuffix(document.getElementById('viewMin').value);
   const viewMax = parseSuffix(document.getElementById('viewMax').value);
 
+  const days = parseInt(document.getElementById('recentUpload').value) || 0;
+  const cutoff = days ? new Date(Date.now() - days * 86400000) : null;
+
   filteredChannels = allChannels.filter(ch => {
     if (!ch.hiddenSubs) {
       if (subMin !== null && ch.subscribers < subMin) return false;
@@ -386,6 +427,9 @@ function applyFiltersAndRender() {
     }
     if (viewMin !== null && ch.totalViews < viewMin) return false;
     if (viewMax !== null && ch.totalViews > viewMax) return false;
+    if (cutoff && ch.lastUpload !== undefined) {
+      if (!ch.lastUpload || ch.lastUpload < cutoff) return false;
+    }
     return true;
   });
 
@@ -394,13 +438,14 @@ function applyFiltersAndRender() {
   else if (sortBy === 'views_desc') filteredChannels.sort((a,b) => b.totalViews-a.totalViews);
   else if (sortBy === 'views_asc') filteredChannels.sort((a,b) => a.totalViews-b.totalViews);
   else if (sortBy === 'videos_desc') filteredChannels.sort((a,b) => b.videoCount-a.videoCount);
+  else if (sortBy === 'recent_desc') filteredChannels.sort((a,b) => (b.lastUpload||0)-(a.lastUpload||0));
 
-  renderActiveFilters(subMin, subMax, viewMin, viewMax);
+  renderActiveFilters(subMin, subMax, viewMin, viewMax, cutoff, days);
   renderChannels();
   updatePagination();
 }
 
-function renderActiveFilters(subMin, subMax, viewMin, viewMax) {
+function renderActiveFilters(subMin, subMax, viewMin, viewMax, cutoff, days) {
   const c = document.getElementById('activeFilters'); c.innerHTML = '';
   const add = (label, fn) => {
     const el = document.createElement('div'); el.className = 'active-filter-tag';
@@ -411,10 +456,13 @@ function renderActiveFilters(subMin, subMax, viewMin, viewMax) {
     add(`Subs: ${subMin ? formatNum(subMin) : '0'} – ${subMax ? formatNum(subMax) : '∞'}`, "clearFilter('sub')");
   if (viewMin !== null || viewMax !== null)
     add(`Views: ${viewMin ? formatNum(viewMin) : '0'} – ${viewMax ? formatNum(viewMax) : '∞'}`, "clearFilter('view')");
+  if (cutoff)
+    add(`Uploaded within ${days}d`, "clearFilter('recent')");
 }
 
 function clearFilter(type) {
   if (type === 'sub') { document.getElementById('subMin').value=''; document.getElementById('subMax').value=''; }
+  if (type === 'recent') { document.getElementById('recentUpload').value='any'; }
   if (type === 'view') { document.getElementById('viewMin').value=''; document.getElementById('viewMax').value=''; }
   if (allChannels.length) applyFiltersAndRender();
 }
@@ -451,6 +499,7 @@ function renderChannels() {
         <div class="stat-pill"><div class="stat-dot" style="background:${subsColor}"></div>${ch.hiddenSubs ? 'Subs hidden' : formatNum(ch.subscribers)+' subs'}</div>
         <div class="stat-pill"><div class="stat-dot" style="background:${viewsColor}"></div>${formatNum(ch.totalViews)} views</div>
         <div class="stat-pill" style="color:var(--muted);font-size:11px;">${formatNum(ch.videoCount)} videos</div>
+        ${ch.lastUpload ? \`<div class=\"stat-pill\" style=\"color:var(--muted);font-size:11px;\">Last: \${ch.lastUpload.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>\` : ''}
       </div>
     </a>`;
   }).join('')}</div>`;
