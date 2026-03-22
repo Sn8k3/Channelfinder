@@ -182,7 +182,7 @@
 <div class="layout">
   <aside class="sidebar">
     <div class="search-box">
-      <input type="text" class="search-input" id="searchInput" placeholder="Search channels…" />
+      <input type="text" class="search-input" id="searchInput" placeholder="Search channels (optional)…" />
       <button class="search-btn" id="searchBtn" onclick="doSearch()">Search</button>
     </div>
 
@@ -263,7 +263,7 @@
       <div class="empty-state">
         <div class="empty-icon"></div>
         <div class="empty-title">Find YouTube Channels</div>
-        <div class="empty-desc">Search for channels by topic, name, or keyword. Filter results by subscribers and views.</div>
+        <div class="empty-desc">Click Search to browse channels, or enter a keyword to narrow results. Use the filters on the left to refine.</div>
       </div>
     </div>
   </main>
@@ -347,7 +347,6 @@ async function fetchLastUploads() {
 
 async function doSearch(pageToken) {
   const query = document.getElementById('searchInput').value.trim();
-  if (!query) return;
 
   if (!pageToken) { pageTokens = [null]; currentPage = 0; }
 
@@ -360,7 +359,7 @@ async function doSearch(pageToken) {
   try {
     const searchParams = new URLSearchParams({
       part: 'snippet',
-      q: query + (selectedCat !== 'Any' ? ' ' + selectedCat : ''),
+      ...(query || selectedCat !== 'Any' ? { q: query || selectedCat } : { q: 'youtube' }),
       type: 'channel', maxResults: 25, key: API_KEY,
       ...(pageToken ? { pageToken } : {})
     });
