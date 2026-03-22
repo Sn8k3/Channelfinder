@@ -359,7 +359,8 @@ async function doSearch(pageToken) {
   try {
     const searchParams = new URLSearchParams({
       part: 'snippet',
-      ...(query || selectedCat !== 'Any' ? { q: query || selectedCat } : { q: 'youtube' }),
+      q: query ? (selectedCat !== 'Any' ? query + ' ' + selectedCat : query)
+           : (selectedCat !== 'Any' ? selectedCat + ' channel' : 'channel'),
       type: 'channel', maxResults: 25, key: API_KEY,
       ...(pageToken ? { pageToken } : {})
     });
