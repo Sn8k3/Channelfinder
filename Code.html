@@ -345,56 +345,126 @@ async function fetchLastUploads() {
   hint.style.display = 'none';
 }
 
+// Niche keyword variations to surface smaller channels
+const NICHE_SUFFIXES = [
+  'tips', 'guide', 'review', 'tutorial', 'vlog', 'how to',
+  'beginners', 'explained', 'weekly', 'daily', 'indie', 'new'
+];
+
+function buildQueries(query, cat) {
+  const base = query || (cat !== 'Any' ? cat : '');
+  const queries = [];
+  if (base) queries.push(base);
+  // Add niche variants to surface smaller channels
+  const suffixes = NICHE_SUFFIXES.sort(() => Math.random() - 0.5).slice(0, 4);
+  for (const s of suffixes) {
+    queries.push(base ? `${base} ${s}` : `${cat !== 'Any' ? cat + ' ' : ''}${s}`);
+  }
+  if (!base) queries.push('channel update', 'channel 2024', 'channel 2025');
+  return queries;
+}
+
+async function fetchChannelPage(q, pageToken) {
+  const params = new URLSearchParams({
+    part: 'snippet', q, type: 'channel', maxResults: 50, key: API_KEY,
+    ...(pageToken ? { pageToken } : {})
+  });
+  const res = await fetch(`${YT_SEARCH_URL}?${params}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data;
+}
+
+async function fetchStats(ids) {
+  const params = new URLSearchParams({ part: 'snippet,statistics', id: ids.join(','), key: API_KEY });
+  const res = await fetch(`${YT_CHANNELS_URL}?${params}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.items.map(ch => ({
+    id: ch.id,
+    name: ch.snippet.title,
+    handle: ch.snippet.customUrl ? '@' + ch.snippet.customUrl.replace('@','') : '',
+    description: ch.snippet.description || '',
+    thumbnail: ch.snippet.thumbnails?.medium?.url || ch.snippet.thumbnails?.default?.url || '',
+    country: ch.snippet.country || '',
+    subscribers: ch.statistics.hiddenSubscriberCount ? null : parseInt(ch.statistics.subscriberCount || 0),
+    totalViews: parseInt(ch.statistics.viewCount || 0),
+    videoCount: parseInt(ch.statistics.videoCount || 0),
+    hiddenSubs: !!ch.statistics.hiddenSubscriberCount,
+    url: `https://www.youtube.com/channel/${ch.id}`
+  }));
+}
+
 async function doSearch(pageToken) {
   const query = document.getElementById('searchInput').value.trim();
-
-  if (!pageToken) { pageTokens = [null]; currentPage = 0; }
+  if (!pageToken) { pageTokens = [null]; currentPage = 0; allChannels = []; }
 
   const btn = document.getElementById('searchBtn');
   btn.disabled = true; btn.textContent = '…';
   document.getElementById('resultsHeader').style.display = 'none';
   document.getElementById('activeFilters').innerHTML = '';
-  document.getElementById('results').innerHTML = `<div class="loading-state"><div class="spinner"></div><div class="loading-text">Searching YouTube…</div></div>`;
+
+  const subMin = parseSuffix(document.getElementById('subMin').value) || 0;
+  const subMax = parseSuffix(document.getElementById('subMax').value) || Infinity;
+  const needsDeepFetch = subMax <= 100000; // small channel range — fetch more aggressively
+
+  const updateStatus = (msg) => {
+    document.getElementById('results').innerHTML = `<div class="loading-state"><div class="spinner"></div><div class="loading-text">${msg}</div></div>`;
+  };
 
   try {
-    const searchParams = new URLSearchParams({
-      part: 'snippet',
-      q: query ? (selectedCat !== 'Any' ? query + ' ' + selectedCat : query)
-           : (selectedCat !== 'Any' ? selectedCat + ' channel' : 'channel'),
-      type: 'channel', maxResults: 25, key: API_KEY,
-      ...(pageToken ? { pageToken } : {})
-    });
+    let collected = [];
+    const seen = new Set();
 
-    const searchRes = await fetch(`${YT_SEARCH_URL}?${searchParams}`);
-    const searchData = await searchRes.json();
-    if (searchData.error) throw new Error(searchData.error.message);
+    if (needsDeepFetch && !pageToken) {
+      // Multi-query sweep to surface smaller channels
+      const queries = buildQueries(query, selectedCat);
+      updateStatus(`Searching across ${queries.length} query variations…`);
 
-    const channelIds = searchData.items.map(i => i.snippet.channelId || i.id.channelId).join(',');
-    if (!channelIds) { allChannels = []; applyFiltersAndRender(); return; }
+      for (let qi = 0; qi < queries.length; qi++) {
+        updateStatus(`Scanning variation ${qi + 1} of ${queries.length}…`);
+        let token = null;
+        // Fetch up to 3 pages per query variant
+        for (let page = 0; page < 3; page++) {
+          try {
+            const data = await fetchChannelPage(queries[qi], token);
+            const ids = (data.items || [])
+              .map(i => i.snippet?.channelId || i.id?.channelId)
+              .filter(id => id && !seen.has(id));
+            ids.forEach(id => seen.add(id));
+            if (ids.length) {
+              updateStatus(`Fetching stats… (${seen.size} channels scanned)`);
+              const stats = await fetchStats(ids);
+              collected.push(...stats);
+            }
+            token = data.nextPageToken;
+            if (!token) break;
+          } catch(e) { break; }
+        }
+        // Stop early if we already have plenty in range
+        const inRange = collected.filter(ch => !ch.hiddenSubs && ch.subscribers >= subMin && ch.subscribers <= subMax);
+        if (inRange.length >= 30) break;
+      }
 
-    if (searchData.nextPageToken && pageTokens.length <= currentPage + 1)
-      pageTokens.push(searchData.nextPageToken);
+      allChannels = collected;
+      // Store a dummy next page token so pagination still works
+      if (collected.length > 0) pageTokens = [null];
 
-    const statsParams = new URLSearchParams({
-      part: 'snippet,statistics', id: channelIds, key: API_KEY
-    });
-    const statsRes = await fetch(`${YT_CHANNELS_URL}?${statsParams}`);
-    const statsData = await statsRes.json();
-    if (statsData.error) throw new Error(statsData.error.message);
-
-    allChannels = statsData.items.map(ch => ({
-      id: ch.id,
-      name: ch.snippet.title,
-      handle: ch.snippet.customUrl ? '@' + ch.snippet.customUrl.replace('@','') : '',
-      description: ch.snippet.description || '',
-      thumbnail: ch.snippet.thumbnails?.medium?.url || ch.snippet.thumbnails?.default?.url || '',
-      country: ch.snippet.country || '',
-      subscribers: ch.statistics.hiddenSubscriberCount ? null : parseInt(ch.statistics.subscriberCount || 0),
-      totalViews: parseInt(ch.statistics.viewCount || 0),
-      videoCount: parseInt(ch.statistics.videoCount || 0),
-      hiddenSubs: !!ch.statistics.hiddenSubscriberCount,
-      url: `https://www.youtube.com/channel/${ch.id}`
-    }));
+    } else {
+      // Standard single-page search
+      updateStatus('Searching YouTube…');
+      const q = query ? (selectedCat !== 'Any' ? query + ' ' + selectedCat : query)
+                      : (selectedCat !== 'Any' ? selectedCat + ' channel' : 'channel');
+      const data = await fetchChannelPage(q, pageToken);
+      const ids = (data.items || []).map(i => i.snippet?.channelId || i.id?.channelId).filter(Boolean);
+      if (data.nextPageToken && pageTokens.length <= currentPage + 1)
+        pageTokens.push(data.nextPageToken);
+      if (ids.length) {
+        allChannels = await fetchStats(ids);
+      } else {
+        allChannels = [];
+      }
+    }
 
     applyFiltersAndRender();
   } catch(err) {
